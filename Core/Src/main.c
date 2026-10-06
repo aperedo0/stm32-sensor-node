@@ -1,4 +1,5 @@
 /* USER CODE BEGIN Header */
+#include <stdio.h>
 /**
   ******************************************************************************
   * @file           : main.c
@@ -91,6 +92,10 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
+  uint32_t count = 0;
+  char buf[32];
+
+  uint8_t last = 1;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -98,8 +103,18 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-
     /* USER CODE BEGIN 3 */
+
+	uint8_t now = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
+	if(last == 1 & now == 0)
+	{
+		int len = snprintf(buf, sizeof(buf), "Press %lu\r\n", count);
+		count++;
+		HAL_UART_Transmit(&huart2, (uint8_t *)buf, len, HAL_MAX_DELAY);
+		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+	}
+	last = now;
+	HAL_Delay(10);
   }
   /* USER CODE END 3 */
 }
