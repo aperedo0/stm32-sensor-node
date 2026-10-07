@@ -46,6 +46,7 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 
 volatile uint8_t button_pressed = 0;
+uint32_t last_press_ms = 0;
 
 /* USER CODE END PV */
 
@@ -249,7 +250,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 	if(GPIO_Pin == B1_Pin)
 	{
-		button_pressed = 1;
+		uint16_t now = HAL_GetTick();
+		if(now - last_press_ms >= 50)
+		{
+			now = last_press_ms;
+			button_pressed = 1;
+		}
 	}
 }
 
