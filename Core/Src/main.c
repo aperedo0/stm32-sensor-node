@@ -45,6 +45,8 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
+volatile uint8_t button_pressed = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -103,18 +105,17 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
+
     /* USER CODE BEGIN 3 */
 
-	uint8_t now = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
-	if(last == 1 & now == 0)
+	if(button_pressed)
 	{
-		int len = snprintf(buf, sizeof(buf), "Press %lu\r\n", count);
 		count++;
+		button_pressed = 0;
+		int len = snprintf(buf, sizeof(buf), "Pressed %lu\r\n", count);
 		HAL_UART_Transmit(&huart2, (uint8_t *)buf, len, HAL_MAX_DELAY);
 		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 	}
-	last = now;
-	HAL_Delay(10);
   }
   /* USER CODE END 3 */
 }
@@ -233,12 +234,24 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	if(GPIO_Pin == B1_Pin)
+	{
+		button_pressed = 1;
+	}
+}
 
 /* USER CODE END 4 */
 
