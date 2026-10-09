@@ -1,5 +1,4 @@
 /* USER CODE BEGIN Header */
-#include <stdio.h>
 /**
   ******************************************************************************
   * @file           : main.c
@@ -22,6 +21,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+
+#include "stdio.h"
 
 /* USER CODE END Includes */
 
@@ -46,7 +47,10 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 
 volatile uint8_t button_pressed = 0;
+volatile uint8_t received;
+volatile uint8_t rx_byte_available = 0;
 uint32_t last_press_ms = 0;
+uint8_t rx_byte;
 
 /* USER CODE END PV */
 
@@ -95,10 +99,11 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
+  HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
+
   uint32_t count = 0;
   char buf[32];
 
-  uint8_t last = 1;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -116,6 +121,11 @@ int main(void)
 		int len = snprintf(buf, sizeof(buf), "Pressed %lu\r\n", count);
 		HAL_UART_Transmit(&huart2, (uint8_t *)buf, len, HAL_MAX_DELAY);
 		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+	}
+	if(rx_byte_available)
+	{
+		rx_byte_available = 0;
+		HAL_UART_Transmit(&huart2, (uint8_t *)&received, 1, HAL_MAX_DELAY);
 	}
   }
   /* USER CODE END 3 */
@@ -250,12 +260,21 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 	if(GPIO_Pin == B1_Pin)
 	{
-		uint16_t now = HAL_GetTick();
+		uint32_t now = HAL_GetTick();
 		if(now - last_press_ms >= 50)
 		{
-			now = last_press_ms;
+			last_press_ms = now;
 			button_pressed = 1;
 		}
+	}
+}
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if(huart == &huart2)
+	{
+		received = rx_byte;
+		rx_byte_available = 1;
+		HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
 	}
 }
 
