@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#include <stdbool.h>
 #include "stdio.h"
 
 /* USER CODE END Includes */
@@ -33,6 +34,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+#define QUEUE_SIZE 64
 
 /* USER CODE END PD */
 
@@ -47,10 +50,11 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 
 volatile uint8_t button_pressed = 0;
-volatile uint8_t received;
-volatile uint8_t rx_byte_available = 0;
 uint32_t last_press_ms = 0;
-uint8_t rx_byte;
+uint8_t incoming_byte;
+volatile uint8_t received_bytes[QUEUE_SIZE];
+volatile uint8_t next_read_index = 0;
+volatile uint8_t next_write_index = 0;
 
 /* USER CODE END PV */
 
@@ -64,6 +68,30 @@ static void MX_USART2_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static bool queue_add_byte(uint8_t byte)
+{
+	uint8_t index_after_write = (next_write_index + 1) & (QUEUE_SIZE -1);
+	if (index_after_write == next_read_index)
+	{
+		return false;
+	}
+	received_bytes[next_write_index] = byte;
+	next_write_index = index_after_write;
+	return true;
+}
+
+static bool queue_is_empty(void)
+{
+	return next_write_index == next_read_index;
+}
+
+static uint8_t queue_take_byte(void)
+{
+	uint8_t current = next_read_index;
+	next_read_index = (next_read_index + 1) & (QUEUE_SIZE - 1);
+	return received_bytes[current];
+}
 
 /* USER CODE END 0 */
 
@@ -99,7 +127,7 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
+  HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
 
   uint32_t count = 0;
   char buf[32];
@@ -122,10 +150,11 @@ int main(void)
 		HAL_UART_Transmit(&huart2, (uint8_t *)buf, len, HAL_MAX_DELAY);
 		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 	}
-	if(rx_byte_available)
+	// while loop that transmits until queue is empty
+	while(!queue_is_empty())
 	{
-		rx_byte_available = 0;
-		HAL_UART_Transmit(&huart2, (uint8_t *)&received, 1, HAL_MAX_DELAY);
+		uint8_t current = queue_take_byte();
+		HAL_UART_Transmit(&huart2, &current, 1, HAL_MAX_DELAY);
 	}
   }
   /* USER CODE END 3 */
@@ -272,9 +301,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 	if(huart == &huart2)
 	{
-		received = rx_byte;
-		rx_byte_available = 1;
-		HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
+		queue_add_byte(incoming_byte);
+		HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
 	}
 }
 
