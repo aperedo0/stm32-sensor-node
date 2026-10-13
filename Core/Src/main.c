@@ -23,7 +23,8 @@
 /* USER CODE BEGIN Includes */
 
 #include <stdbool.h>
-#include "stdio.h"
+#include <string.h>
+#include <"stdio.h">
 
 /* USER CODE END Includes */
 
@@ -36,6 +37,7 @@
 /* USER CODE BEGIN PD */
 
 #define QUEUE_SIZE 64
+#define COMMAND_MAX_LENGTH 32
 
 /* USER CODE END PD */
 
@@ -55,6 +57,11 @@ uint8_t incoming_byte;
 volatile uint8_t received_bytes[QUEUE_SIZE];
 volatile uint8_t next_read_index = 0;
 volatile uint8_t next_write_index = 0;
+char command_text[COMMAND_MAX_LENGTH];
+uint8_t command_length = 0;
+uint32_t press_count;
+char press_message[32];
+
 
 /* USER CODE END PV */
 
@@ -88,9 +95,46 @@ static bool queue_is_empty(void)
 
 static uint8_t queue_take_byte(void)
 {
-	uint8_t current = next_read_index;
+	uint8_t byte_taken = received_bytes[next_read_index];
 	next_read_index = (next_read_index + 1) & (QUEUE_SIZE - 1);
-	return received_bytes[current];
+	return byte_taken;
+}
+
+// send text
+static void send_message(const char *text)
+{
+	HAL_UART_Transmit(&huart2, (uint8_t *)text, strlen(text), HAL_MAX_DELAY);
+}
+
+// run command
+static void run_command(void)
+{
+	if(command_length == 0)
+	{
+		return;
+	}
+
+	else if(strcmp(command_text, "led_on") == 0)
+	{
+		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+		send_message("OK\r\n");
+	}
+	else if(strcmp(command_text, "led_off") == 0)
+	{
+		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+		send_message("OK\r\n");
+	}
+	else if(strcmp(command_text, "status") == 0)
+	{
+		char status_message[40];
+		GPIO_PinState led_status = HAL_GPIO_ReadPin(LD2_GPIO_Port, LD2_Pin);
+		snprintf(status_message, sizeof(status_message), "LED %d Presses %lu\r\n", (int)led_status, (unsigned long)press_count);
+		send_message(status_message);
+	}
+	else
+	{
+		send_message("Unknown command\r\n");
+	}
 }
 
 /* USER CODE END 0 */
@@ -128,9 +172,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
-
-  uint32_t count = 0;
-  char buf[32];
+  send_message("\r\nReady. Commands: led_on, led_off, status\r\n> ");
 
   /* USER CODE END 2 */
 
@@ -144,17 +186,44 @@ int main(void)
 
 	if(button_pressed)
 	{
-		count++;
+		press_count++;
 		button_pressed = 0;
-		int len = snprintf(buf, sizeof(buf), "Pressed %lu\r\n", count);
-		HAL_UART_Transmit(&huart2, (uint8_t *)buf, len, HAL_MAX_DELAY);
+		int len = snprintf(press_message, sizeof(press_message), "Pressed %lu\r\n", press_count);
+		HAL_UART_Transmit(&huart2, (uint8_t *)press_message, len, HAL_MAX_DELAY);
 		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 	}
 	// while loop that transmits until queue is empty
 	while(!queue_is_empty())
 	{
-		uint8_t current = queue_take_byte();
-		HAL_UART_Transmit(&huart2, &current, 1, HAL_MAX_DELAY);
+		uint8_t current_byte = queue_take_byte();
+
+		// enter
+		if(current_byte == '\r')
+		{
+			send_message("\r\n");
+			command_text[command_length] = '\0';
+			run_command();
+			command_length = 0;
+			send_message("> ");
+		}
+		// backspace
+		else if(current_byte == 0x7F || current_byte == '\b')
+		{
+			if(command_length > 0)
+			{
+				send_message("\b \b");
+				command_length--;
+			}
+
+		}
+		// normal character
+		else if(command_length < (COMMAND_MAX_LENGTH - 1))
+		{
+			command_text[command_length] = current_byte;
+			command_length++;
+			HAL_UART_Transmit(&huart2, &current_byte, 1, HAL_MAX_DELAY);
+		}
+
 	}
   }
   /* USER CODE END 3 */
