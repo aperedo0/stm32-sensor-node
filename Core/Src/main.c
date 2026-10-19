@@ -36,8 +36,12 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define QUEUE_SIZE 64
-#define COMMAND_MAX_LENGTH 32
+#define QUEUE_SIZE                64
+#define COMMAND_MAX_LENGTH        32
+
+#define BME280_I2C_ADDRESS        0x77
+#define BME280_I2C_REGISTER       0xD0
+#define BME280_I2C_EXPECTED_ID    0x60
 
 /* USER CODE END PD */
 
@@ -47,18 +51,20 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
-volatile uint8_t button_pressed = 0;
-uint32_t last_press_ms = 0;
+volatile uint8_t button_pressed =   0;
+uint32_t last_press_ms =            0;
 uint8_t incoming_byte;
 volatile uint8_t received_bytes[QUEUE_SIZE];
-volatile uint8_t next_read_index = 0;
+volatile uint8_t next_read_index =  0;
 volatile uint8_t next_write_index = 0;
 char command_text[COMMAND_MAX_LENGTH];
-uint8_t command_length = 0;
+uint8_t command_length =            0;
 uint32_t press_count;
 char press_message[32];
 
@@ -69,6 +75,7 @@ char press_message[32];
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -131,6 +138,34 @@ static void run_command(void)
 		snprintf(status_message, sizeof(status_message), "LED %d Presses %lu\r\n", (int)led_status, (unsigned long)press_count);
 		send_message(status_message);
 	}
+	else if(strcmp(command_text, "sensor_id") == 0)
+	{
+		uint8_t sensor_id_value = 0;
+		HAL_StatusTypeDef result;
+		char id_message[32];
+
+		result = HAL_I2C_Mem_Read(
+				&hi2c1,
+				BME280_I2C_ADDRESS << 1,
+				BME280_I2C_REGISTER,
+				I2C_MEMADD_SIZE_8BIT,
+				&sensor_id_value,
+				1,
+				100
+		);
+
+		// If result is not HAL_OK:
+		//     Send "Sensor not responding\r\n" using send_message.
+		if(result != HAL_OK)
+		{
+			send_message("Sensor not responding\r\n");
+		}
+		else
+		{
+			snprintf(id_message, sizeof(id_message), "BME280 ID 0x%02X\r\n",(unsigned int)sensor_id_value);
+			send_message(id_message);
+		}
+	}
 	else
 	{
 		send_message("Unknown command\r\n");
@@ -169,10 +204,11 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
   HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
-  send_message("\r\nReady. Commands: led_on, led_off, status\r\n> ");
+  send_message("Ready. Commands: led_on, led_off, status, sensor_id\r\n> ");
 
   /* USER CODE END 2 */
 
@@ -188,7 +224,7 @@ int main(void)
 	{
 		press_count++;
 		button_pressed = 0;
-		int len = snprintf(press_message, sizeof(press_message), "Pressed %lu\r\n", press_count);
+		int len = snprintf(press_message, sizeof(press_message), "Pressed %lu\r\n", (unsigned long)press_count);
 		HAL_UART_Transmit(&huart2, (uint8_t *)press_message, len, HAL_MAX_DELAY);
 		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 	}
@@ -274,6 +310,40 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
