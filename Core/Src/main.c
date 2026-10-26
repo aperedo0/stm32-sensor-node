@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
+#include "bme280.h"
 
 /* USER CODE END Includes */
 
@@ -36,12 +37,8 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define QUEUE_SIZE                64
-#define COMMAND_MAX_LENGTH        32
-
-#define BME280_I2C_ADDRESS        0x77
-#define BME280_I2C_REGISTER       0xD0
-#define BME280_I2C_EXPECTED_ID    0x60
+#define QUEUE_SIZE                     64
+#define COMMAND_MAX_LENGTH             32
 
 /* USER CODE END PD */
 
@@ -67,21 +64,52 @@ char command_text[COMMAND_MAX_LENGTH];
 uint8_t command_length =            0;
 uint32_t press_count;
 char press_message[32];
+bool bme280_ready = false;
 
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
+
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static int32_t celsius_to_fahrenheit_hundredths(int32_t celsius_hundredths)
+{
+	return ((celsius_hundredths * 9) / 5) + 3200;
+}
+
+static void send_message(const char *text)
+{
+	HAL_UART_Transmit(&huart2, (uint8_t *)text, strlen(text), HAL_MAX_DELAY);
+}
+
+static void send_reading(const char *label, int32_t value_hundredths, const char *unit)
+{
+	const char *sign = "";
+
+	if (value_hundredths < 0)
+	{
+		sign = "-";
+		value_hundredths = -value_hundredths;
+	}
+
+	char reading_message[48];
+
+	snprintf(reading_message, sizeof(reading_message), "%s %s%ld.%02ld %s\r\n",
+			label, sign, (long)value_hundredths / 100, (long)value_hundredths % 100, unit);
+
+	send_message(reading_message);
+}
 
 static bool queue_add_byte(uint8_t byte)
 {
@@ -107,13 +135,6 @@ static uint8_t queue_take_byte(void)
 	return byte_taken;
 }
 
-// send text
-static void send_message(const char *text)
-{
-	HAL_UART_Transmit(&huart2, (uint8_t *)text, strlen(text), HAL_MAX_DELAY);
-}
-
-// run command
 static void run_command(void)
 {
 	if(command_length == 0)
@@ -141,29 +162,30 @@ static void run_command(void)
 	else if(strcmp(command_text, "sensor_id") == 0)
 	{
 		uint8_t sensor_id_value = 0;
-		HAL_StatusTypeDef result;
-		char id_message[32];
 
-		result = HAL_I2C_Mem_Read(
-				&hi2c1,
-				BME280_I2C_ADDRESS << 1,
-				BME280_I2C_REGISTER,
-				I2C_MEMADD_SIZE_8BIT,
-				&sensor_id_value,
-				1,
-				100
-		);
-
-		// If result is not HAL_OK:
-		//     Send "Sensor not responding\r\n" using send_message.
-		if(result != HAL_OK)
+		if (!bme280_read_id(&sensor_id_value))
 		{
 			send_message("Sensor not responding\r\n");
 		}
 		else
 		{
-			snprintf(id_message, sizeof(id_message), "BME280 ID 0x%02X\r\n",(unsigned int)sensor_id_value);
+			char id_message[32];
+			snprintf(id_message, sizeof(id_message), "BME280 ID 0x%02X\r\n", sensor_id_value);
 			send_message(id_message);
+		}
+	}
+	else if(strcmp(command_text, "temp") == 0)
+	{
+		int32_t temperature_hundredths;
+		if(!bme280_ready || !bme280_read_temperature(&temperature_hundredths))
+		{
+			send_message("Sensor not responding\r\n");
+		}
+		else
+		{
+			int32_t fahrenheit_hundredths = celsius_to_fahrenheit_hundredths(temperature_hundredths);
+			send_reading("Temperature", temperature_hundredths, "C");
+			send_reading("Temperature", fahrenheit_hundredths, "F");
 		}
 	}
 	else
@@ -207,8 +229,15 @@ int main(void)
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
+  bme280_ready = bme280_init(&hi2c1);
+
+  if(!bme280_ready)
+  {
+	  send_message("bme 280 is not ready\r\n");
+  }
+
   HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
-  send_message("Ready. Commands: led_on, led_off, status, sensor_id\r\n> ");
+  send_message("\r\nReady. Commands: led_on, led_off, status, sensor_id, temp\r\n> ");
 
   /* USER CODE END 2 */
 

@@ -122,6 +122,16 @@
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_uart.c</locationURI>
 		</link>
 		<link>
+			<name>Application/User/Core/bme280.c</name>
+			<type>1</type>
+			<location>/Users/antonioperedo/code/stm32-sensor-node/Core/Src/bme280.c</location>
+		</link>
+		<link>
+			<name>Application/User/Core/bme280.h</name>
+			<type>1</type>
+			<location>/Users/antonioperedo/code/stm32-sensor-node/Core/Inc/bme280.h</location>
+		</link>
+		<link>
 			<name>Application/User/Core/main.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Core/Src/main.c</locationURI>
