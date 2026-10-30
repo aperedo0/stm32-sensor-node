@@ -135,6 +135,16 @@ static uint8_t queue_take_byte(void)
 	return byte_taken;
 }
 
+static bool get_store_reading(bme_measurements *reading)
+{
+	if(!bme280_ready || !bme280_read(reading))
+	{
+		send_message("Sensor not responding\r\n");
+		return false;
+	}
+	return true;
+}
+
 static void run_command(void)
 {
 	if(command_length == 0)
@@ -174,18 +184,40 @@ static void run_command(void)
 			send_message(id_message);
 		}
 	}
-	else if(strcmp(command_text, "temp") == 0)
+	else if (strcmp(command_text, "temp") == 0)
 	{
-		int32_t temperature_hundredths;
-		if(!bme280_ready || !bme280_read_temperature(&temperature_hundredths))
+		bme_measurements values;
+		if(get_store_reading(&values))
 		{
-			send_message("Sensor not responding\r\n");
+			send_reading("Temperature", values.temperature_hundredths, "C");
+			send_reading("Temperature", celsius_to_fahrenheit_hundredths(values.temperature_hundredths), "F");
 		}
-		else
+	}
+	else if (strcmp(command_text, "humidity") == 0)
+	{
+		bme_measurements values;
+		if(get_store_reading(&values))
 		{
-			int32_t fahrenheit_hundredths = celsius_to_fahrenheit_hundredths(temperature_hundredths);
-			send_reading("Temperature", temperature_hundredths, "C");
-			send_reading("Temperature", fahrenheit_hundredths, "F");
+			send_reading("Humidity", (int32_t)values.humidity_hundredths, "%");
+		}
+	}
+	else if (strcmp(command_text, "pressure") == 0)
+	{
+		bme_measurements values;
+		if(get_store_reading(&values))
+		{
+			send_reading("Pressure", (int32_t)values.pressure_pascals, "hPa");
+		}
+	}
+	else if (strcmp(command_text, "read") == 0)
+	{
+		bme_measurements values;
+		if(get_store_reading(&values))
+		{
+			send_reading("Temperature", values.temperature_hundredths, "C");
+			send_reading("Temperature", celsius_to_fahrenheit_hundredths(values.temperature_hundredths), "F");
+			send_reading("Humidity", (int32_t)values.humidity_hundredths, "%");
+			send_reading("Pressure", (int32_t)values.pressure_pascals, "hPa");
 		}
 	}
 	else
@@ -237,7 +269,8 @@ int main(void)
   }
 
   HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
-  send_message("\r\nReady. Commands: led_on, led_off, status, sensor_id, temp\r\n> ");
+  send_message("\r\nReady. Commands: led_on, led_off, status, sensor_id, "
+		  "temp, humidity, pressure, read\r\n> ");
 
   /* USER CODE END 2 */
 
