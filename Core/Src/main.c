@@ -50,6 +50,8 @@
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
 
+TIM_HandleTypeDef htim2;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -65,17 +67,18 @@ uint8_t command_length =            0;
 uint32_t press_count;
 char press_message[32];
 bool bme280_ready = false;
+volatile uint8_t one_second_passed = 0;
+bool auto_report_enabled = false;
 
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
-
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
-
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -135,7 +138,7 @@ static uint8_t queue_take_byte(void)
 	return byte_taken;
 }
 
-static bool get_store_reading(bme_measurements *reading)
+static bool get_store_readings(bme_measurements *reading)
 {
 	if(!bme280_ready || !bme280_read(reading))
 	{
@@ -143,6 +146,18 @@ static bool get_store_reading(bme_measurements *reading)
 		return false;
 	}
 	return true;
+}
+
+static void send_all_readings(void)
+{
+	bme_measurements readings;
+	if(!get_store_readings(&readings)){ return; }
+	send_reading("Temperature", readings.temperature_hundredths, "C");
+	int32_t F = celsius_to_fahrenheit_hundredths(readings.temperature_hundredths);
+
+	send_reading("Temperature", F, "F");
+	send_reading("Humidity", (int32_t)readings.humidity_hundredths, "%");
+	send_reading("Pressure", (int32_t)readings.pressure_pascals, "hPa");
 }
 
 static void run_command(void)
@@ -187,7 +202,7 @@ static void run_command(void)
 	else if (strcmp(command_text, "temp") == 0)
 	{
 		bme_measurements values;
-		if(get_store_reading(&values))
+		if(get_store_readings(&values))
 		{
 			send_reading("Temperature", values.temperature_hundredths, "C");
 			send_reading("Temperature", celsius_to_fahrenheit_hundredths(values.temperature_hundredths), "F");
@@ -196,7 +211,7 @@ static void run_command(void)
 	else if (strcmp(command_text, "humidity") == 0)
 	{
 		bme_measurements values;
-		if(get_store_reading(&values))
+		if(get_store_readings(&values))
 		{
 			send_reading("Humidity", (int32_t)values.humidity_hundredths, "%");
 		}
@@ -204,21 +219,24 @@ static void run_command(void)
 	else if (strcmp(command_text, "pressure") == 0)
 	{
 		bme_measurements values;
-		if(get_store_reading(&values))
+		if(get_store_readings(&values))
 		{
 			send_reading("Pressure", (int32_t)values.pressure_pascals, "hPa");
 		}
 	}
 	else if (strcmp(command_text, "read") == 0)
 	{
-		bme_measurements values;
-		if(get_store_reading(&values))
-		{
-			send_reading("Temperature", values.temperature_hundredths, "C");
-			send_reading("Temperature", celsius_to_fahrenheit_hundredths(values.temperature_hundredths), "F");
-			send_reading("Humidity", (int32_t)values.humidity_hundredths, "%");
-			send_reading("Pressure", (int32_t)values.pressure_pascals, "hPa");
-		}
+		send_all_readings();
+	}
+	else if (strcmp(command_text, "auto_on") == 0)
+	{
+		auto_report_enabled = true;
+		send_message("OK\r\n");
+	}
+	else if (strcmp(command_text, "auto_off") == 0)
+	{
+		auto_report_enabled = false;
+		send_message("OK\r\n");
 	}
 	else
 	{
@@ -259,7 +277,10 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_I2C1_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+
+  HAL_TIM_Base_Start_IT(&htim2);
 
   bme280_ready = bme280_init(&hi2c1);
 
@@ -270,7 +291,7 @@ int main(void)
 
   HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
   send_message("\r\nReady. Commands: led_on, led_off, status, sensor_id, "
-		  "temp, humidity, pressure, read\r\n> ");
+		  "temp, humidity, pressure, read, auto_on, auto_off\r\n> ");
 
   /* USER CODE END 2 */
 
@@ -281,6 +302,24 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+	  // Check whether one_second_passed is 1.
+
+	  // If it is:
+	  //     Reset one_second_passed to 0.
+
+	  //     Check whether auto_report_enabled is true.
+
+	  //     If automatic reporting is enabled:
+	  //         Call send_all_readings().
+	if(one_second_passed == 1)
+	{
+		one_second_passed = 0;
+		if(auto_report_enabled == true)
+		{
+			send_all_readings();
+		}
+	}
 
 	if(button_pressed)
 	{
@@ -409,6 +448,51 @@ static void MX_I2C1_Init(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 8399;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 49999;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -485,6 +569,23 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    // Check whether the timer that triggered
+    // this callback is TIM2.
+
+    // If it is TIM2, set one_second_passed to 1.
+
+    // Do not read the sensor here.
+
+    // Do not send UART messages here.
+
+	if(htim == &htim2)
+	{
+		one_second_passed = 1;
+	}
+}
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
