@@ -51,6 +51,7 @@
 I2C_HandleTypeDef hi2c1;
 
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim6;
 
 UART_HandleTypeDef huart2;
 
@@ -67,8 +68,9 @@ uint8_t command_length =            0;
 uint32_t press_count;
 char press_message[32];
 bool bme280_ready = false;
-volatile uint8_t one_second_passed = 0;
+volatile uint8_t report_timer_elapsed = 0;
 bool auto_report_enabled = false;
+uint8_t led_brightness_percent = 0;
 
 
 /* USER CODE END PV */
@@ -79,12 +81,26 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static void set_led_brightness(uint8_t brightness_percent)
+{
+	if(brightness_percent > 100)
+	{
+		brightness_percent = 100;
+	}
+	led_brightness_percent = brightness_percent;
+
+	uint16_t timer_ticks = (brightness_percent * 10);
+
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, timer_ticks);
+}
 
 static int32_t celsius_to_fahrenheit_hundredths(int32_t celsius_hundredths)
 {
@@ -169,19 +185,18 @@ static void run_command(void)
 
 	else if(strcmp(command_text, "led_on") == 0)
 	{
-		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+		set_led_brightness(100);
 		send_message("OK\r\n");
 	}
 	else if(strcmp(command_text, "led_off") == 0)
 	{
-		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+		set_led_brightness(0);
 		send_message("OK\r\n");
 	}
 	else if(strcmp(command_text, "status") == 0)
 	{
-		char status_message[40];
-		GPIO_PinState led_status = HAL_GPIO_ReadPin(LD2_GPIO_Port, LD2_Pin);
-		snprintf(status_message, sizeof(status_message), "LED %d Presses %lu\r\n", (int)led_status, (unsigned long)press_count);
+		char status_message[48];
+		snprintf(status_message, sizeof(status_message), "LED brightness %d%% Presses %lu\r\n", (int)led_brightness_percent, (unsigned long)press_count);
 		send_message(status_message);
 	}
 	else if(strcmp(command_text, "sensor_id") == 0)
@@ -244,6 +259,19 @@ static void run_command(void)
 	}
 }
 
+static uint8_t new_brightness(uint8_t current)
+{
+	uint8_t new = current +25;
+	if (new > 100)
+	{
+		return 0;
+	}
+	else
+	{
+		return new;
+	}
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -278,11 +306,13 @@ int main(void)
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   MX_TIM2_Init();
+  MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_TIM_Base_Start_IT(&htim2);
-
   bme280_ready = bme280_init(&hi2c1);
+
+  HAL_TIM_Base_Start_IT(&htim6);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 
   if(!bme280_ready)
   {
@@ -303,18 +333,9 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	  // Check whether one_second_passed is 1.
-
-	  // If it is:
-	  //     Reset one_second_passed to 0.
-
-	  //     Check whether auto_report_enabled is true.
-
-	  //     If automatic reporting is enabled:
-	  //         Call send_all_readings().
-	if(one_second_passed == 1)
+	if(report_timer_elapsed == 1)
 	{
-		one_second_passed = 0;
+		report_timer_elapsed = 0;
 		if(auto_report_enabled == true)
 		{
 			send_all_readings();
@@ -327,7 +348,7 @@ int main(void)
 		button_pressed = 0;
 		int len = snprintf(press_message, sizeof(press_message), "Pressed %lu\r\n", (unsigned long)press_count);
 		HAL_UART_Transmit(&huart2, (uint8_t *)press_message, len, HAL_MAX_DELAY);
-		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+		set_led_brightness(new_brightness(led_brightness_percent));
 	}
 	// while loop that transmits until queue is empty
 	while(!queue_is_empty())
@@ -461,14 +482,15 @@ static void MX_TIM2_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
 
   /* USER CODE BEGIN TIM2_Init 1 */
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 8399;
+  htim2.Init.Prescaler = 83;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 49999;
+  htim2.Init.Period = 999;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -480,15 +502,66 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 8399;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 49999;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
 
 }
 
@@ -543,21 +616,11 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
-
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : LD2_Pin */
-  GPIO_InitStruct.Pin = LD2_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
@@ -572,18 +635,9 @@ static void MX_GPIO_Init(void)
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-    // Check whether the timer that triggered
-    // this callback is TIM2.
-
-    // If it is TIM2, set one_second_passed to 1.
-
-    // Do not read the sensor here.
-
-    // Do not send UART messages here.
-
-	if(htim == &htim2)
+	if(htim == &htim6)
 	{
-		one_second_passed = 1;
+		report_timer_elapsed = 1;
 	}
 }
 
