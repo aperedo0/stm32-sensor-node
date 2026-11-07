@@ -40,8 +40,22 @@
 #define QUEUE_SIZE                     64
 #define COMMAND_MAX_LENGTH             32
 #define ADC_MAX_COUNT                  4095
-#define ADC_REFERENCE_MILLIVOLTS       3300
-#define ADC_TIMEOUT_MS                 10
+#define ADC_REFERENCE_MILLIVOLTS 3300
+#define ADC_TIMEOUT_MS 10
+
+#define ADC_CHANNEL_COUNT              3
+
+#define ADC_SLOT_A0                    0
+#define ADC_SLOT_CHIP_TEMPERATURE      1
+#define ADC_SLOT_INTERNAL_REFERENCE    2
+
+#define TS_CAL1_ADDRESS                ((const uint16_t *)0x1FFF7A2C)
+#define TS_CAL2_ADDRESS                ((const uint16_t *)0x1FFF7A2E)
+#define VREFINT_CAL_ADDRESS            ((const uint16_t *)0x1FFF7A2A)
+
+#define FACTORY_SUPPLY_MILLIVOLTS      3300
+#define TS_CAL1_TEMPERATURE_C          30
+#define TS_CAL2_TEMPERATURE_C          110
 
 /* USER CODE END PD */
 
@@ -52,6 +66,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
 
 I2C_HandleTypeDef hi2c1;
 
@@ -76,13 +91,14 @@ bool bme280_ready = false;
 volatile uint8_t report_timer_elapsed = 0;
 bool auto_report_enabled = false;
 uint8_t led_brightness_percent = 0;
-
+volatile uint16_t adc_latest_counts[ADC_CHANNEL_COUNT];
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM2_Init(void);
@@ -94,6 +110,38 @@ static void MX_ADC1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static uint32_t measure_supply_millivolts(void)
+{
+	uint32_t curvref = adc_latest_counts[ADC_SLOT_INTERNAL_REFERENCE];
+	if(curvref == 0){ return 0; }
+	uint32_t calc = (FACTORY_SUPPLY_MILLIVOLTS * (*VREFINT_CAL_ADDRESS)) / curvref;
+	return calc;
+}
+
+static uint32_t measure_a0_millivolts(void)
+{
+	uint32_t latest_a0_count = adc_latest_counts[ADC_SLOT_A0];
+	return (latest_a0_count * measure_supply_millivolts()) / ADC_MAX_COUNT;
+}
+
+static int32_t measure_chip_temperature_hundredths(void)
+{
+	int32_t sensor_count = adc_latest_counts[ADC_SLOT_CHIP_TEMPERATURE];
+	int32_t sensor_count_at_factory_supply = (sensor_count * (int32_t)measure_supply_millivolts()) / FACTORY_SUPPLY_MILLIVOLTS;
+
+	int32_t count_at_30c = *TS_CAL1_ADDRESS;
+	int32_t count_at_110c = *TS_CAL2_ADDRESS;
+
+	if(count_at_30c == count_at_110c) { return 0; }
+
+	int32_t temp = 3000
+			+ (((sensor_count_at_factory_supply - count_at_30c)
+			* (TS_CAL2_TEMPERATURE_C - TS_CAL1_TEMPERATURE_C) * 100)
+			/(count_at_110c - count_at_30c));
+
+	return temp;
+}
 
 static uint32_t adc_count_to_millivolts(uint16_t raw_count)
 {
@@ -221,7 +269,8 @@ static void run_command(void)
 	else if(strcmp(command_text, "status") == 0)
 	{
 		char status_message[48];
-		snprintf(status_message, sizeof(status_message), "LED brightness %d%% Presses %lu\r\n", (int)led_brightness_percent, (unsigned long)press_count);
+		snprintf(status_message, sizeof(status_message), "LED brightness %d%% Presses %lu\r\n",
+				(int)led_brightness_percent, (unsigned long)press_count);
 		send_message(status_message);
 	}
 	else if(strcmp(command_text, "sensor_id") == 0)
@@ -280,17 +329,29 @@ static void run_command(void)
 	}
 	else if (strcmp(command_text, "a0_voltage") == 0)
 	{
-		uint16_t a0_raw_count;
 		char voltage_message[48];
-		if(!read_a0_raw_count(&a0_raw_count))
+
+		snprintf(voltage_message, sizeof(voltage_message), "A0 raw %u = %lu mV\r\n",
+				(unsigned int)adc_latest_counts[ADC_SLOT_A0], (unsigned long)measure_a0_millivolts());
+		send_message(voltage_message);
+	}
+	else if (strcmp(command_text, "supply_voltage") == 0)
+	{
+		char supply_message[32];
+		snprintf(supply_message, sizeof(supply_message), "Supply %lu mV\r\n",
+		         (unsigned long)measure_supply_millivolts());
+		send_message(supply_message);
+	}
+	else if (strcmp(command_text, "chip_temp") == 0)
+	{
+		send_reading("Chip temperature", measure_chip_temperature_hundredths(), "C");
+
+		bme_measurements room;
+		if (get_store_readings(&room))
 		{
-			send_message("ADC not responding\r\n");
-		}
-		else
-		{
-			uint32_t a0_millivolts = adc_count_to_millivolts(a0_raw_count);
-			snprintf(voltage_message, sizeof(voltage_message), "A0 raw %u = %lu mV\r\n", (unsigned int)a0_raw_count, (unsigned long)a0_millivolts);
-			send_message(voltage_message);
+			int32_t F = celsius_to_fahrenheit_hundredths(room.temperature_hundredths);
+			send_reading("Room temperature (BME280)", room.temperature_hundredths, "C");
+			send_reading("Room temperature (BME280)", F, "F");
 		}
 	}
 	else
@@ -343,6 +404,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   MX_TIM2_Init();
@@ -350,6 +412,10 @@ int main(void)
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
+  if(HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_latest_counts, ADC_CHANNEL_COUNT) != HAL_OK)
+  {
+	  Error_Handler();
+  }
   bme280_ready = bme280_init(&hi2c1);
 
   HAL_TIM_Base_Start_IT(&htim6);
@@ -362,7 +428,7 @@ int main(void)
 
   HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
   send_message("\r\nReady. Commands: led_on, led_off, status, sensor_id, "
-		  "temp, humidity, pressure, read, auto_on, auto_off, a0_voltage\r\n> ");
+		  "temp, humidity, pressure, read, auto_on, auto_off, a0_voltage, supply_voltage, chip_temp\r\n> ");
 
   /* USER CODE END 2 */
 
@@ -498,14 +564,14 @@ static void MX_ADC1_Init(void)
   hadc1.Instance = ADC1;
   hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
-  hadc1.Init.ScanConvMode = DISABLE;
-  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.ScanConvMode = ENABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 1;
-  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.NbrOfConversion = 3;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
@@ -516,7 +582,25 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_144CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_480CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+  sConfig.Rank = 2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_VREFINT;
+  sConfig.Rank = 3;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -688,6 +772,22 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
 
 }
 
