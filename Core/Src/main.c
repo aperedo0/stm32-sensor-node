@@ -354,6 +354,19 @@ static void run_command(void)
 			send_reading("Room temperature (BME280)", F, "F");
 		}
 	}
+	else if (strcmp(command_text, "crash_bad_address") == 0)
+	{
+		send_message("Reading from an address with no memory...\r\n");
+		volatile uint32_t value_from_nowhere = *(volatile uint32_t *)0x20030000;
+		(void)value_from_nowhere;
+	}
+	else if (strcmp(command_text, "crash_divide_by_zero") == 0)
+	{
+		send_message("Dividing by zero...\r\n");
+		volatile int32_t numerator = 10;
+		volatile int32_t denominator = 0;
+		volatile int32_t result = numerator/denominator;
+	}
 	else
 	{
 		send_message("Unknown command\r\n");
@@ -412,6 +425,8 @@ int main(void)
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
+  SCB->CCR |= SCB_CCR_DIV_0_TRP_Msk;
+
   if(HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_latest_counts, ADC_CHANNEL_COUNT) != HAL_OK)
   {
 	  Error_Handler();
@@ -428,7 +443,8 @@ int main(void)
 
   HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
   send_message("\r\nReady. Commands: led_on, led_off, status, sensor_id, "
-		  "temp, humidity, pressure, read, auto_on, auto_off, a0_voltage, supply_voltage, chip_temp\r\n> ");
+		  "temp, humidity, pressure, read, auto_on, auto_off, a0_voltage, supply_voltage, chip_temp, "
+		  "crash_bad_address, crash_divide_by_zero\r\n> ");
 
   /* USER CODE END 2 */
 
@@ -850,6 +866,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 	if(huart == &huart2)
 	{
+
 		queue_add_byte(incoming_byte);
 		HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
 	}

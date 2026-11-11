@@ -52,6 +52,50 @@
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+static void fault_send_char(char character)
+{
+    while(!(USART2->SR & USART_SR_TXE))
+    {
+
+    }
+    USART2->DR = character;
+}
+
+static void fault_send_text(const char *text)
+{
+    uint8_t curr = 0;
+    while(text[curr] != '\0')
+    {
+    	fault_send_char(text[curr]);
+    	curr++;
+    }
+}
+
+static void fault_send_hex(uint32_t value)
+{
+    const char *hex_digits = "0123456789ABCDEF";
+    fault_send_text("0x");
+    uint8_t curr = 0;
+
+    for(int8_t i = 28; i > -4; i = i - 4)
+    {
+    	curr = (value >> i) & 0xF;
+    	fault_send_char(hex_digits[curr]);
+    }
+}
+
+static void report_hard_fault(void)
+{
+	fault_send_text("*** HARD FAULT ***\r\n");
+	fault_send_text("CFSR ");
+	fault_send_hex(SCB->CFSR);
+	fault_send_text("\r\nHFSR ");
+	fault_send_hex(SCB->HFSR);
+	fault_send_text("\r\nBFAR ");
+	fault_send_hex(SCB->BFAR);
+	fault_send_text("\r\n");
+}
+
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
@@ -86,6 +130,8 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
+
+	report_hard_fault();
 
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
