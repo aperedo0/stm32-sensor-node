@@ -24,5 +24,6 @@ typedef struct
 bool bme280_init(I2C_HandleTypeDef *i2c_handle);
 bool bme280_read_id(uint8_t *chip_id);
 bool bme280_read(bme_measurements *reading);
+const char *bme280_describe_last_error(void);
 
 #endif /* BME280_H_ */

@@ -35,6 +35,8 @@ static int16_t dig_H2, dig_H4, dig_H5;
 static int8_t dig_H6;
 
 static int32_t t_fine;
+static HAL_StatusTypeDef last_i2c_result = HAL_OK;
+static uint32_t last_i2c_error_flags = HAL_I2C_ERROR_NONE;
 
 static uint32_t compensate_humidity(int32_t adc_H)
 {
@@ -122,16 +124,25 @@ static int32_t compensate_temperature(int32_t adc_T)
 
 static bool read_registers(uint8_t first_register, uint8_t *destination, uint16_t count)
 {
-  return HAL_I2C_Mem_Read(bme280_i2c, BME280_I2C_ADDRESS << 1, first_register,
+	last_i2c_result = HAL_I2C_Mem_Read(bme280_i2c, BME280_I2C_ADDRESS << 1, first_register,
                           I2C_MEMADD_SIZE_8BIT, destination, count,
-                          BME280_I2C_TIMEOUT_MS) == HAL_OK;
+                          BME280_I2C_TIMEOUT_MS);
+
+	last_i2c_error_flags = HAL_I2C_GetError(bme280_i2c);
+
+	return last_i2c_result == HAL_OK;
 }
 
 static bool write_register(uint8_t register_address, uint8_t value)
 {
-  return HAL_I2C_Mem_Write(bme280_i2c, BME280_I2C_ADDRESS << 1, register_address,
+
+	last_i2c_result = HAL_I2C_Mem_Write(bme280_i2c, BME280_I2C_ADDRESS << 1, register_address,
                            I2C_MEMADD_SIZE_8BIT, &value, 1,
-                           BME280_I2C_TIMEOUT_MS) == HAL_OK;
+                           BME280_I2C_TIMEOUT_MS);
+
+	last_i2c_error_flags = HAL_I2C_GetError(bme280_i2c);
+
+	return last_i2c_result == HAL_OK;
 }
 
 static uint16_t little_endian_u16(const uint8_t *bytes)
@@ -219,4 +230,14 @@ bool bme280_read(bme_measurements *reading)
     reading->humidity_hundredths = compensate_humidity(adc_H);
 
     return true;
+}
+
+const char *bme280_describe_last_error(void)
+{
+	if(last_i2c_result == HAL_OK){ return "no error"; }
+	else if(last_i2c_result == HAL_BUSY){ return "I2C bus busy (a line may be stuck low)"; }
+	else if(last_i2c_result == HAL_TIMEOUT){ return "I2C timeout (sensor or bus not responding)"; }
+	else if(last_i2c_error_flags & HAL_I2C_ERROR_AF){ return "no ACK (wrong address or sensor not connected)"; }
+	else if(last_i2c_error_flags & HAL_I2C_ERROR_BERR){ return "bus error (noise or bad wiring)"; }
+	else { return 	"unknown I2C error"; }
 }

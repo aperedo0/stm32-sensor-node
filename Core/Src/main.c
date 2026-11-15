@@ -231,7 +231,9 @@ static bool get_store_readings(bme_measurements *reading)
 {
 	if(!bme280_ready || !bme280_read(reading))
 	{
-		send_message("Sensor not responding\r\n");
+		send_message("Sensor not responding ");
+		send_message(bme280_describe_last_error());
+		send_message("\r\n");
 		return false;
 	}
 	return true;
@@ -279,7 +281,9 @@ static void run_command(void)
 
 		if (!bme280_read_id(&sensor_id_value))
 		{
-			send_message("Sensor not responding\r\n");
+			send_message("Sensor not responding ");
+			send_message(bme280_describe_last_error());
+			send_message("\r\n");
 		}
 		else
 		{
