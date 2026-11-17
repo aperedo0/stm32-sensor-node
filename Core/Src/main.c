@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -42,6 +43,7 @@
 #define ADC_MAX_COUNT                  4095
 #define ADC_REFERENCE_MILLIVOLTS 3300
 #define ADC_TIMEOUT_MS 10
+#define REPORT_INTERVAL_MS 5000
 
 #define ADC_CHANNEL_COUNT              3
 
@@ -71,10 +73,23 @@ DMA_HandleTypeDef hdma_adc1;
 I2C_HandleTypeDef hi2c1;
 
 TIM_HandleTypeDef htim2;
-TIM_HandleTypeDef htim6;
 
 UART_HandleTypeDef huart2;
 
+/* Definitions for shellTask */
+osThreadId_t shellTaskHandle;
+const osThreadAttr_t shellTask_attributes = {
+  .name = "shellTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for ReportTask */
+osThreadId_t ReportTaskHandle;
+const osThreadAttr_t ReportTask_attributes = {
+  .name = "ReportTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityBelowNormal,
+};
 /* USER CODE BEGIN PV */
 
 volatile uint8_t button_pressed =   0;
@@ -88,7 +103,6 @@ uint8_t command_length =            0;
 uint32_t press_count;
 char press_message[32];
 bool bme280_ready = false;
-volatile uint8_t report_timer_elapsed = 0;
 bool auto_report_enabled = false;
 uint8_t led_brightness_percent = 0;
 volatile uint16_t adc_latest_counts[ADC_CHANNEL_COUNT];
@@ -102,8 +116,10 @@ static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM2_Init(void);
-static void MX_TIM6_Init(void);
 static void MX_ADC1_Init(void);
+void run_shell_task(void *argument);
+void run_report_task(void *argument);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -425,7 +441,6 @@ int main(void)
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   MX_TIM2_Init();
-  MX_TIM6_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
@@ -437,7 +452,6 @@ int main(void)
   }
   bme280_ready = bme280_init(&hi2c1);
 
-  HAL_TIM_Base_Start_IT(&htim6);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 
   if(!bme280_ready)
@@ -452,6 +466,45 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* Init scheduler */
+  osKernelInitialize();
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* creation of shellTask */
+  shellTaskHandle = osThreadNew(run_shell_task, NULL, &shellTask_attributes);
+
+  /* creation of ReportTask */
+  ReportTaskHandle = osThreadNew(run_report_task, NULL, &ReportTask_attributes);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* USER CODE BEGIN RTOS_EVENTS */
+  /* add events, ... */
+  /* USER CODE END RTOS_EVENTS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -459,57 +512,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
-	if(report_timer_elapsed == 1)
-	{
-		report_timer_elapsed = 0;
-		if(auto_report_enabled == true)
-		{
-			send_all_readings();
-		}
-	}
-
-	if(button_pressed)
-	{
-		press_count++;
-		button_pressed = 0;
-		int len = snprintf(press_message, sizeof(press_message), "Pressed %lu\r\n", (unsigned long)press_count);
-		HAL_UART_Transmit(&huart2, (uint8_t *)press_message, len, HAL_MAX_DELAY);
-		set_led_brightness(new_brightness(led_brightness_percent));
-	}
-	// while loop that transmits until queue is empty
-	while(!queue_is_empty())
-	{
-		uint8_t current_byte = queue_take_byte();
-
-		// enter
-		if(current_byte == '\r')
-		{
-			send_message("\r\n");
-			command_text[command_length] = '\0';
-			run_command();
-			command_length = 0;
-			send_message("> ");
-		}
-		// backspace
-		else if(current_byte == 0x7F || current_byte == '\b')
-		{
-			if(command_length > 0)
-			{
-				send_message("\b \b");
-				command_length--;
-			}
-
-		}
-		// normal character
-		else if(command_length < (COMMAND_MAX_LENGTH - 1))
-		{
-			command_text[command_length] = current_byte;
-			command_length++;
-			HAL_UART_Transmit(&huart2, &current_byte, 1, HAL_MAX_DELAY);
-		}
-
-	}
   }
   /* USER CODE END 3 */
 }
@@ -725,44 +727,6 @@ static void MX_TIM2_Init(void)
 }
 
 /**
-  * @brief TIM6 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM6_Init(void)
-{
-
-  /* USER CODE BEGIN TIM6_Init 0 */
-
-  /* USER CODE END TIM6_Init 0 */
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* USER CODE BEGIN TIM6_Init 1 */
-
-  /* USER CODE END TIM6_Init 1 */
-  htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 8399;
-  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 49999;
-  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM6_Init 2 */
-
-  /* USER CODE END TIM6_Init 2 */
-
-}
-
-/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -806,7 +770,7 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA2_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
 
 }
@@ -836,7 +800,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -845,14 +809,6 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-	if(htim == &htim6)
-	{
-		report_timer_elapsed = 1;
-	}
-}
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
@@ -877,6 +833,109 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 }
 
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_run_shell_task */
+/**
+  * @brief  Function implementing the shellTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_run_shell_task */
+void run_shell_task(void *argument)
+{
+  /* USER CODE BEGIN 5 */
+  /* Infinite loop */
+	for(;;)
+	{
+		if(button_pressed)
+		{
+			press_count++;
+			button_pressed = 0;
+			int len = snprintf(press_message, sizeof(press_message), "Pressed %lu\r\n", (unsigned long)press_count);
+			HAL_UART_Transmit(&huart2, (uint8_t *)press_message, len, HAL_MAX_DELAY);
+			set_led_brightness(new_brightness(led_brightness_percent));
+		}
+		// while loop that transmits until queue is empty
+		while(!queue_is_empty())
+		{
+			uint8_t current_byte = queue_take_byte();
+
+			// enter
+			if(current_byte == '\r')
+			{
+				send_message("\r\n");
+				command_text[command_length] = '\0';
+				run_command();
+				command_length = 0;
+				send_message("> ");
+			}
+			// backspace
+			else if(current_byte == 0x7F || current_byte == '\b')
+			{
+				if(command_length > 0)
+				{
+					send_message("\b \b");
+					command_length--;
+				}
+
+			}
+			// normal character
+			else if(command_length < (COMMAND_MAX_LENGTH - 1))
+			{
+				command_text[command_length] = current_byte;
+				command_length++;
+				HAL_UART_Transmit(&huart2, &current_byte, 1, HAL_MAX_DELAY);
+			}
+		}
+	  osDelay(10);
+  }
+  /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_run_report_task */
+/**
+* @brief Function implementing the ReportTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_run_report_task */
+void run_report_task(void *argument)
+{
+  /* USER CODE BEGIN run_report_task */
+  /* Infinite loop */
+	for(;;)
+	{
+		osDelay(REPORT_INTERVAL_MS);
+
+		if(auto_report_enabled)
+		{
+			send_all_readings();
+		}
+	}
+  /* USER CODE END run_report_task */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM7 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM7)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.

@@ -142,6 +142,56 @@
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_uart.c</locationURI>
 		</link>
 		<link>
+			<name>Middlewares/FreeRTOS/cmsis_os2.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.c</locationURI>
+		</link>
+		<link>
+			<name>Middlewares/FreeRTOS/croutine.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/Third_Party/FreeRTOS/Source/croutine.c</locationURI>
+		</link>
+		<link>
+			<name>Middlewares/FreeRTOS/event_groups.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/Third_Party/FreeRTOS/Source/event_groups.c</locationURI>
+		</link>
+		<link>
+			<name>Middlewares/FreeRTOS/heap_4.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c</locationURI>
+		</link>
+		<link>
+			<name>Middlewares/FreeRTOS/list.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/Third_Party/FreeRTOS/Source/list.c</locationURI>
+		</link>
+		<link>
+			<name>Middlewares/FreeRTOS/port.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/port.c</locationURI>
+		</link>
+		<link>
+			<name>Middlewares/FreeRTOS/queue.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/Third_Party/FreeRTOS/Source/queue.c</locationURI>
+		</link>
+		<link>
+			<name>Middlewares/FreeRTOS/stream_buffer.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/Third_Party/FreeRTOS/Source/stream_buffer.c</locationURI>
+		</link>
+		<link>
+			<name>Middlewares/FreeRTOS/tasks.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/Third_Party/FreeRTOS/Source/tasks.c</locationURI>
+		</link>
+		<link>
+			<name>Middlewares/FreeRTOS/timers.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/Third_Party/FreeRTOS/Source/timers.c</locationURI>
+		</link>
+		<link>
 			<name>Application/User/Core/bme280.c</name>
 			<type>1</type>
 			<location>/Users/antonioperedo/code/stm32-sensor-node/Core/Src/bme280.c</location>
@@ -152,6 +202,11 @@
 			<location>/Users/antonioperedo/code/stm32-sensor-node/Core/Inc/bme280.h</location>
 		</link>
 		<link>
+			<name>Application/User/Core/freertos.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Core/Src/freertos.c</locationURI>
+		</link>
+		<link>
 			<name>Application/User/Core/main.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Core/Src/main.c</locationURI>
@@ -160,6 +215,11 @@
 			<name>Application/User/Core/stm32f4xx_hal_msp.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Core/Src/stm32f4xx_hal_msp.c</locationURI>
+		</link>
+		<link>
+			<name>Application/User/Core/stm32f4xx_hal_timebase_tim.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Core/Src/stm32f4xx_hal_timebase_tim.c</locationURI>
 		</link>
 		<link>
 			<name>Application/User/Core/stm32f4xx_it.c</name>
