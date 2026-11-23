@@ -33,17 +33,28 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+typedef enum
+{
+    SHELL_EVENT_BUTTON_PRESSED = 0,
+    SHELL_EVENT_CHARACTER_RECEIVED = 1
+} shell_event_type_t;
+
+typedef struct
+{
+    shell_event_type_t type;
+    uint8_t character;
+} shell_event_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define QUEUE_SIZE                     64
 #define COMMAND_MAX_LENGTH             32
 #define ADC_MAX_COUNT                  4095
 #define ADC_REFERENCE_MILLIVOLTS 3300
 #define ADC_TIMEOUT_MS 10
-#define REPORT_INTERVAL_MS 5000
+#define REPORT_INTERVAL_MS             5000
 
 #define ADC_CHANNEL_COUNT              3
 
@@ -58,6 +69,8 @@
 #define FACTORY_SUPPLY_MILLIVOLTS      3300
 #define TS_CAL1_TEMPERATURE_C          30
 #define TS_CAL2_TEMPERATURE_C          110
+
+#define SHELL_EVENT_QUEUE_LENGTH       64
 
 /* USER CODE END PD */
 
@@ -92,20 +105,17 @@ const osThreadAttr_t ReportTask_attributes = {
 };
 /* USER CODE BEGIN PV */
 
-volatile uint8_t button_pressed =   0;
 uint32_t last_press_ms =            0;
 uint8_t incoming_byte;
-volatile uint8_t received_bytes[QUEUE_SIZE];
-volatile uint8_t next_read_index =  0;
-volatile uint8_t next_write_index = 0;
 char command_text[COMMAND_MAX_LENGTH];
 uint8_t command_length =            0;
 uint32_t press_count;
 char press_message[32];
-bool bme280_ready = false;
-bool auto_report_enabled = false;
-uint8_t led_brightness_percent = 0;
+bool bme280_ready =                 false;
+bool auto_report_enabled =          false;
+uint8_t led_brightness_percent =    0;
 volatile uint16_t adc_latest_counts[ADC_CHANNEL_COUNT];
+osMessageQueueId_t shell_event_queue;
 
 /* USER CODE END PV */
 
@@ -217,30 +227,6 @@ static void send_reading(const char *label, int32_t value_hundredths, const char
 			label, sign, (long)value_hundredths / 100, (long)value_hundredths % 100, unit);
 
 	send_message(reading_message);
-}
-
-static bool queue_add_byte(uint8_t byte)
-{
-	uint8_t index_after_write = (next_write_index + 1) & (QUEUE_SIZE -1);
-	if (index_after_write == next_read_index)
-	{
-		return false;
-	}
-	received_bytes[next_write_index] = byte;
-	next_write_index = index_after_write;
-	return true;
-}
-
-static bool queue_is_empty(void)
-{
-	return next_write_index == next_read_index;
-}
-
-static uint8_t queue_take_byte(void)
-{
-	uint8_t byte_taken = received_bytes[next_read_index];
-	next_read_index = (next_read_index + 1) & (QUEUE_SIZE - 1);
-	return byte_taken;
 }
 
 static bool get_store_readings(bme_measurements *reading)
@@ -406,6 +392,43 @@ static uint8_t new_brightness(uint8_t current)
 	}
 }
 
+static void handle_received_character(uint8_t character)
+{
+	// enter
+	if(character == '\r')
+	{
+		send_message("\r\n");
+		command_text[command_length] = '\0';
+		run_command();
+		command_length = 0;
+		send_message("> ");
+	}
+	// backspace
+	else if(character == 0x7F || character == '\b')
+	{
+		if(command_length > 0)
+		{
+			send_message("\b \b");
+			command_length--;
+		}
+	}
+	// normal character
+	else if(command_length < (COMMAND_MAX_LENGTH - 1))
+	{
+		command_text[command_length] = character;
+		command_length++;
+		HAL_UART_Transmit(&huart2, &character, 1, HAL_MAX_DELAY);
+	}
+}
+
+static void handle_button_press(void)
+{
+	press_count++;
+	int len = snprintf(press_message, sizeof(press_message), "Pressed %lu\r\n", (unsigned long)press_count);
+	HAL_UART_Transmit(&huart2, (uint8_t *)press_message, len, HAL_MAX_DELAY);
+	set_led_brightness(new_brightness(led_brightness_percent));
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -459,7 +482,6 @@ int main(void)
 	  send_message("bme 280 is not ready\r\n");
   }
 
-  HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
   send_message("\r\nReady. Commands: led_on, led_off, status, sensor_id, "
 		  "temp, humidity, pressure, read, auto_on, auto_off, a0_voltage, supply_voltage, chip_temp, "
 		  "crash_bad_address, crash_divide_by_zero\r\n> ");
@@ -483,6 +505,8 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+  shell_event_queue = osMessageQueueNew(SHELL_EVENT_QUEUE_LENGTH, sizeof(shell_event_t), NULL);
+  HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -817,8 +841,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 		uint32_t now = HAL_GetTick();
 		if(now - last_press_ms >= 50)
 		{
+			shell_event_t button_event;
+			button_event.type = SHELL_EVENT_BUTTON_PRESSED;
+			button_event.character = 0;
+
 			last_press_ms = now;
-			button_pressed = 1;
+			osMessageQueuePut(shell_event_queue, &button_event, 0, 0);
 		}
 	}
 }
@@ -827,7 +855,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	if(huart == &huart2)
 	{
 
-		queue_add_byte(incoming_byte);
+		shell_event_t character_event;
+		character_event.type = SHELL_EVENT_CHARACTER_RECEIVED;
+		character_event.character = incoming_byte;
+		osMessageQueuePut(shell_event_queue, &character_event, 0, 0);
 		HAL_UART_Receive_IT(&huart2, &incoming_byte, 1);
 	}
 }
@@ -847,48 +878,20 @@ void run_shell_task(void *argument)
   /* Infinite loop */
 	for(;;)
 	{
-		if(button_pressed)
+		shell_event_t event;
+		if(osMessageQueueGet(shell_event_queue, &event, NULL, osWaitForever) != osOK)
 		{
-			press_count++;
-			button_pressed = 0;
-			int len = snprintf(press_message, sizeof(press_message), "Pressed %lu\r\n", (unsigned long)press_count);
-			HAL_UART_Transmit(&huart2, (uint8_t *)press_message, len, HAL_MAX_DELAY);
-			set_led_brightness(new_brightness(led_brightness_percent));
+			continue;
 		}
-		// while loop that transmits until queue is empty
-		while(!queue_is_empty())
+		if(event.type == SHELL_EVENT_BUTTON_PRESSED)
 		{
-			uint8_t current_byte = queue_take_byte();
-
-			// enter
-			if(current_byte == '\r')
-			{
-				send_message("\r\n");
-				command_text[command_length] = '\0';
-				run_command();
-				command_length = 0;
-				send_message("> ");
-			}
-			// backspace
-			else if(current_byte == 0x7F || current_byte == '\b')
-			{
-				if(command_length > 0)
-				{
-					send_message("\b \b");
-					command_length--;
-				}
-
-			}
-			// normal character
-			else if(command_length < (COMMAND_MAX_LENGTH - 1))
-			{
-				command_text[command_length] = current_byte;
-				command_length++;
-				HAL_UART_Transmit(&huart2, &current_byte, 1, HAL_MAX_DELAY);
-			}
+			handle_button_press();
 		}
-	  osDelay(10);
-  }
+		else if(event.type == SHELL_EVENT_CHARACTER_RECEIVED)
+		{
+			handle_received_character(event.character);
+		}
+	}
   /* USER CODE END 5 */
 }
 
