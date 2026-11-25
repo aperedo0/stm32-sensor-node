@@ -116,6 +116,8 @@ bool auto_report_enabled =          false;
 uint8_t led_brightness_percent =    0;
 volatile uint16_t adc_latest_counts[ADC_CHANNEL_COUNT];
 osMessageQueueId_t shell_event_queue;
+osMutexId_t uart_output_mutex;
+osMutexId_t sensor_bus_mutex;
 
 /* USER CODE END PV */
 
@@ -231,7 +233,14 @@ static void send_reading(const char *label, int32_t value_hundredths, const char
 
 static bool get_store_readings(bme_measurements *reading)
 {
-	if(!bme280_ready || !bme280_read(reading))
+	bool read_succeeded;
+	if(osMutexAcquire(sensor_bus_mutex, osWaitForever) != osOK)
+	{
+		Error_Handler();
+	}
+	read_succeeded = bme280_ready && bme280_read(reading);
+	osMutexRelease(sensor_bus_mutex);
+	if(!read_succeeded)
 	{
 		send_message("Sensor not responding ");
 		send_message(bme280_describe_last_error());
@@ -280,8 +289,15 @@ static void run_command(void)
 	else if(strcmp(command_text, "sensor_id") == 0)
 	{
 		uint8_t sensor_id_value = 0;
+		bool id_read_succeeded;
 
-		if (!bme280_read_id(&sensor_id_value))
+		if(osMutexAcquire(sensor_bus_mutex, osWaitForever) != osOK)
+		{
+			Error_Handler();
+		}
+		id_read_succeeded = bme280_read_id(&sensor_id_value);
+		osMutexRelease(sensor_bus_mutex);
+		if (!id_read_succeeded)
 		{
 			send_message("Sensor not responding ");
 			send_message(bme280_describe_last_error());
@@ -493,6 +509,23 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
+  const osMutexAttr_t uart_output_mutex_attributes = {
+      .name = "uart_output",
+      .attr_bits = osMutexPrioInherit
+  };
+
+  const osMutexAttr_t sensor_bus_mutex_attributes = {
+      .name = "sensor_bus",
+      .attr_bits = osMutexPrioInherit
+  };
+
+  uart_output_mutex = osMutexNew(&uart_output_mutex_attributes);
+  sensor_bus_mutex = osMutexNew(&sensor_bus_mutex_attributes);
+
+  if(uart_output_mutex == NULL || sensor_bus_mutex == NULL)
+  {
+	  Error_Handler();
+  }
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -883,6 +916,10 @@ void run_shell_task(void *argument)
 		{
 			continue;
 		}
+		if(osMutexAcquire(uart_output_mutex, osWaitForever) != osOK)
+		{
+			Error_Handler();
+		}
 		if(event.type == SHELL_EVENT_BUTTON_PRESSED)
 		{
 			handle_button_press();
@@ -891,6 +928,7 @@ void run_shell_task(void *argument)
 		{
 			handle_received_character(event.character);
 		}
+		osMutexRelease(uart_output_mutex);
 	}
   /* USER CODE END 5 */
 }
@@ -912,7 +950,12 @@ void run_report_task(void *argument)
 
 		if(auto_report_enabled)
 		{
+			if(osMutexAcquire(uart_output_mutex, osWaitForever) != osOK)
+			{
+				Error_Handler();
+			}
 			send_all_readings();
+			osMutexRelease(uart_output_mutex);
 		}
 	}
   /* USER CODE END run_report_task */
